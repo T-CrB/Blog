@@ -1,0 +1,57 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { posts } from '../../data';
+
+export function getStaticPaths() {
+  return posts.map((post) => ({ params: { slug: post.slug }, props: { post } }));
+}
+
+const { post } = Astro.props;
+const currentIndex = posts.findIndex((item) => item.slug === post.slug);
+const nextPost = posts[(currentIndex + 1) % posts.length];
+---
+
+<BaseLayout title={post.title} description={post.excerpt} ogType="article">
+  <article id="top">
+    <header class="site-shell article-hero">
+      <div class="article-hero-inner">
+        <div class="article-meta"><span>{post.category}</span><span>{post.dateLabel}</span><span>{post.readTime}</span></div>
+        <h1>{post.title}</h1>
+        <p class="lede">{post.excerpt}</p>
+      </div>
+    </header>
+
+    <div class="site-shell article-layout">
+      <div>
+        <div class:list={['article-cover', `accent-${post.accent}`]} aria-hidden="true">
+          <span class="visual-index">{post.coverLabel}</span>
+          <span class="visual-symbol">{post.accent === 'coral' ? '✳' : post.accent === 'blue' ? '↗' : post.accent === 'green' ? '◒' : '✦'}</span>
+          <span class="visual-line"></span>
+        </div>
+        <div class="article-body">
+          {post.body.map((block) => {
+            if (block.type === 'h2') return <h2>{block.text}</h2>;
+            if (block.type === 'quote') return <blockquote>{block.text}{block.cite && <cite>{block.cite}</cite>}</blockquote>;
+            if (block.type === 'list') return <ul>{block.items.map((item) => <li>{item}</li>)}</ul>;
+            return <p>{block.text}</p>;
+          })}
+        </div>
+        <div class="next-article">
+          <div><span>Next note</span><br /><strong>{nextPost.title}</strong></div>
+          <a class="button button-ghost" href={`/blog/${nextPost.slug}/`} aria-label={`阅读下一篇：${nextPost.title}`}>↗</a>
+        </div>
+      </div>
+
+      <aside class="article-side">
+        <div class="article-side-inner">
+          <div class="article-side-block"><span class="article-side-label">On this page</span><a href="#top">回到顶部 ↑</a></div>
+          <div class="article-side-block"><span class="article-side-label">Filed under</span><div class="article-tags">{post.tags.map((tag) => <span class="article-tag">{tag}</span>)}</div></div>
+          <div class="article-side-block"><span class="article-side-label">Share</span><a href={`mailto:?subject=${encodeURIComponent(post.title)}&body=${encodeURIComponent(post.excerpt)}`}>Email this note ↗</a></div>
+        </div>
+      </aside>
+    </div>
+  </article>
+</BaseLayout>
+
+
+

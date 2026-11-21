@@ -1,0 +1,64 @@
+---
+import SiteHeader from '../components/ui/SiteHeader.astro';
+import SiteFooter from '../components/ui/SiteFooter.astro';
+import { siteConfig } from '../config/site';
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+  ogType?: string;
+}
+
+const {
+  title = siteConfig.title,
+  description = siteConfig.description,
+  ogType = 'website'
+} = Astro.props;
+const pageTitle = title === siteConfig.title ? title : `${title} — ${siteConfig.author}`;
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#f4f0e8" />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content={ogType} />
+    <title>{pageTitle}</title>
+  </head>
+  <body>
+    <SiteHeader />
+    <main>
+      <slot />
+    </main>
+    <SiteFooter />
+
+    <script is:inline>
+      const root = document.documentElement;
+      const storedTheme = localStorage.getItem('tcrb-theme');
+      if (storedTheme === 'dark') root.dataset.theme = 'dark';
+
+      document.querySelector('[data-theme-toggle]')?.addEventListener('click', () => {
+        const isDark = root.dataset.theme === 'dark';
+        root.dataset.theme = isDark ? 'light' : 'dark';
+        localStorage.setItem('tcrb-theme', isDark ? 'light' : 'dark');
+      });
+
+      const menuButton = document.querySelector('[data-menu-toggle]');
+      const mobileMenu = document.querySelector('[data-mobile-menu]');
+      menuButton?.addEventListener('click', () => {
+        const isOpen = document.body.classList.toggle('menu-open');
+        menuButton.setAttribute('aria-expanded', String(isOpen));
+        menuButton.setAttribute('aria-label', isOpen ? '关闭菜单' : '打开菜单');
+      });
+      mobileMenu?.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => {
+        document.body.classList.remove('menu-open');
+        menuButton?.setAttribute('aria-expanded', 'false');
+      }));
+    </script>
+  </body>
+</html>

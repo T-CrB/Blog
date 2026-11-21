@@ -1,0 +1,27 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { labs } from '../../data';
+---
+
+<BaseLayout title="实验室" description="TCrB 的实验室：一些还没有长成产品的想法。">
+  <section class="site-shell page-hero">
+    <span class="eyebrow">Playground / Not everything needs a roadmap</span>
+    <h1>这里允许<br /><em>把事情做得不太有用。</em></h1>
+    <p>实验室是一个可以快速试错的房间。颜色、文字、交互和一些还说不清用途的念头，都会先在这里获得一个小小的形状。</p>
+  </section>
+
+  <section class="site-shell page-section-tight">
+    <div class="lab-grid">
+      {labs.map((lab) => (
+        <article class="lab-card">
+          <div>
+            <div class="lab-visual"><span class="lab-number">{lab.number}</span>{lab.number === '01' ? '✺' : lab.number === '02' ? '↝' : '◔'}</div>
+            <h2>{lab.title}</h2>
+            <p>{lab.description}</p>
+          </div>
+          <div class="lab-bottom"><span class="lab-status">{lab.status}</span><span class="lab-arrow">↗</span></div>
+        </article>
+      ))}
+    </div>
+  </section>
+</BaseLayout>

@@ -1,0 +1,31 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { siteConfig } from '../config/site';
+---
+
+<BaseLayout title="关于" description="关于 TCrB：一个写代码、做设计，也在练习慢慢做事的人。">
+  <section class="site-shell page-hero">
+    <span class="eyebrow">A little about me</span>
+    <h1>我想做一个<br /><em>对人有帮助的人。</em></h1>
+    <p>不一定每次都成功，但尽量让做过的事情变得更清楚、更好用，也更值得被继续。</p>
+  </section>
+
+  <section class="site-shell page-section">
+    <div class="about-grid">
+      <aside class="about-profile">
+        <div class="about-profile-mark">t</div>
+        <p><strong>TCrB</strong><br />独立设计师 / 开发者<br />上海 · 远程工作</p>
+      </aside>
+      <div class="about-copy">
+        <p class="lead">我在设计和代码之间来回走动，喜欢把复杂的问题拆成清楚的界面，也喜欢把一个模糊的念头做成可以被使用的原型。</p>
+        <p>白天，我做产品设计、前端开发和内容系统；下班后，我会写一些文章，做一些不一定有用的实验，或者把正在读的书整理成更容易记住的句子。</p>
+        <p>这个网站是我的公开工作台。你可以在这里看到我正在思考什么、最近做了什么，以及哪些东西还没有被做完。</p>
+        <div class="expertise">
+          <div><h3>我能帮忙的事</h3><ul><li>产品与界面设计</li><li>设计系统与前端实现</li><li>内容结构与个人站点</li></ul></div>
+          <div><h3>我正在学习的事</h3><ul><li>更好的写作习惯</li><li>数字花园与长久记录</li><li>如何少做一点，但做深一点</li></ul></div>
+        </div>
+        <div class="about-note">目前正在接受少量独立项目合作。如果你正在做一件真诚、有趣、对人有帮助的事，欢迎 <a class="arrow-link" href={`mailto:${siteConfig.email}`}>给我写信 ↗</a>。</div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

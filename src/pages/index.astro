@@ -1,0 +1,87 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import ArticleCard from '../components/blog/ArticleCard.astro';
+import { posts, projects } from '../data';
+import { siteConfig } from '../config/site';
+
+const featuredPost = posts[0];
+const recentPosts = posts.slice(1, 3);
+---
+
+<BaseLayout title={siteConfig.title} description={siteConfig.description}>
+  <section class="hero">
+    <div class="site-shell hero-grid">
+      <div>
+        <span class="eyebrow">Independent writer · designer · builder</span>
+        <h1>把想法做成<br /><em>可以分享的东西。</em></h1>
+        <p class="hero-copy">你好，我是 TCrB。我在这里记录关于设计、代码、独立创作，以及那些让日常变得更有趣的小问题。</p>
+        <div class="button-row">
+          <a class="button button-primary" href="/blog/">阅读文章 <span>↗</span></a>
+          <a class="button button-ghost" href="/about/">认识我</a>
+        </div>
+        <div class="hero-note"><span class="status-dot"></span> 目前开放新的合作与交流</div>
+      </div>
+
+      <aside class="profile-card" aria-label="个人简介">
+        <div class="profile-card-top">
+          <div class="profile-avatar">t</div>
+          <div>
+            <span class="kicker">Currently</span>
+            <p>在上海，慢慢搭建自己的互联网角落。</p>
+          </div>
+        </div>
+        <div class="profile-card-bottom">
+          <div class="stat"><span class="stat-value">04</span><span class="stat-label">published notes</span></div>
+          <div class="stat"><span class="stat-value">03</span><span class="stat-label">small projects</span></div>
+          <div class="stat"><span class="stat-value">∞</span><span class="stat-label">things to learn</span></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <div class="ticker" aria-hidden="true">
+    <div class="ticker-inner"><span>Selected notes</span><span class="ticker-dot">✳</span><span>Thoughtful interfaces</span><span class="ticker-dot">✳</span><span>Small useful things</span><span class="ticker-dot">✳</span><span>Slow internet</span></div>
+  </div>
+
+  <section class="site-shell page-section">
+    <div class="section-heading">
+      <div><span class="eyebrow">01 / Latest writing</span><h2>最近写了什么</h2></div>
+      <p>把工作里的观察、正在读的东西，以及还没有答案的问题，整理成一些可以慢慢读的文字。</p>
+    </div>
+    <div class="post-grid">
+      <ArticleCard post={featuredPost} />
+      {recentPosts.map((post) => <ArticleCard post={post} />)}
+    </div>
+    <div class="button-row" style="margin-top: 28px; justify-content: flex-end;">
+      <a class="button button-ghost" href="/blog/">查看全部文章 <span>↗</span></a>
+    </div>
+  </section>
+
+  <section class="site-shell page-section-tight">
+    <div class="home-split">
+      <div class="manifesto-card">
+        <span class="eyebrow">02 / A small manifesto</span>
+        <h3>少一点噪音，<br />多一点真正做过的东西。</h3>
+      </div>
+      <div>
+        <div class="section-heading" style="margin-bottom: 22px;">
+          <div><span class="eyebrow">Selected projects</span><h2>正在做的事</h2></div>
+        </div>
+        <div class="project-preview">
+          {projects.map((project, index) => (
+            <a class="project-row" href={project.href}>
+              <div><span class="project-type">0{index + 1} / {project.type}</span><h3>{project.title}</h3></div>
+              <p>{project.description}</p>
+              <span class="arrow-link">↗</span>
+            </a>
+          ))}
+        </div>
+      </div>
+    </div>
+
+    <div class="home-cta">
+      <div><span class="eyebrow">Have a thought?</span><h2>来信，聊聊你正在做的事。</h2></div>
+      <div><p>不论是一个刚冒出来的想法，还是一篇值得交换的文章，我都很愿意认识你。</p><a class="arrow-link" href={`mailto:${siteConfig.email}`}>写封邮件 <span>↗</span></a></div>
+    </div>
+  </section>
+</BaseLayout>

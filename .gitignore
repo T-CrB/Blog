@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.astro/
+.env
+.env.*
+!.env.example
+
+# 日常开发中间产物，仅保留说明文件
+dev-workbench/*
+!dev-workbench/README.md

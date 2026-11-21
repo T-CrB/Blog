@@ -1,0 +1,30 @@
+---
+import { siteConfig } from '../../config/site';
+---
+
+<footer class="site-footer">
+  <div class="site-shell footer-main">
+    <div>
+      <a class="footer-brand" href="/">TCrB<span>✳</span></a>
+      <p>写下正在学习的，<br />分享已经做好的。</p>
+    </div>
+    <div class="footer-links">
+      <div>
+        <span class="footer-label">Explore</span>
+        <a href="/blog/">文章</a>
+        <a href="/projects/">项目</a>
+        <a href="/lab/">实验室</a>
+      </div>
+      <div>
+        <span class="footer-label">Elsewhere</span>
+        <a href={`mailto:${siteConfig.email}`}>Email</a>
+        <a href="https://github.com/" target="_blank" rel="noreferrer">GitHub</a>
+        <a href="https://www.xiaohongshu.com/" target="_blank" rel="noreferrer">小红书</a>
+      </div>
+    </div>
+  </div>
+  <div class="site-shell footer-bottom">
+    <span>© {new Date().getFullYear()} {siteConfig.author}</span>
+    <span>Made slowly, with Astro.</span>
+  </div>
+</footer>
