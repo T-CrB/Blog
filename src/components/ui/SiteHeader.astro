@@ -1,0 +1,45 @@
+---
+import { siteConfig } from '../../config/site';
+
+const currentPath = Astro.url.pathname;
+const isActive = (href: string) => href === '/' ? currentPath === '/' : currentPath.startsWith(href);
+---
+
+<header class="site-header">
+  <div class="site-shell header-inner">
+    <a class="brand" href="/" aria-label="返回首页">
+      <span class="brand-mark">T</span>
+      <span class="brand-copy">
+        <strong>TCrB</strong>
+        <small>notes on making</small>
+      </span>
+    </a>
+
+    <nav class="desktop-nav" aria-label="主导航">
+      {siteConfig.nav.map((item) => (
+        <a class:list={{ active: isActive(item.href) }} href={item.href}>{item.label}</a>
+      ))}
+    </nav>
+
+    <div class="header-actions">
+      <button class="theme-toggle" type="button" aria-label="切换深色模式" data-theme-toggle>
+        <span class="theme-icon theme-icon-sun">☼</span>
+        <span class="theme-icon theme-icon-moon">☾</span>
+      </button>
+      <button class="menu-toggle" type="button" aria-label="打开菜单" aria-expanded="false" data-menu-toggle>
+        <span></span><span></span>
+      </button>
+    </div>
+  </div>
+
+  <div class="mobile-menu" data-mobile-menu>
+    <div class="site-shell mobile-menu-inner">
+      {siteConfig.nav.map((item, index) => (
+        <a class:list={{ active: isActive(item.href) }} href={item.href}>
+          <span>0{index + 1}</span>{item.label}
+        </a>
+      ))}
+      <a class="mobile-email" href={`mailto:${siteConfig.email}`}>{siteConfig.email}</a>
+    </div>
+  </div>
+</header>

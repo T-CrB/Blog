@@ -1,0 +1,32 @@
+---
+import type { Post } from '../../data';
+
+interface Props {
+  post: Post;
+  compact?: boolean;
+}
+
+const { post, compact = false } = Astro.props;
+---
+
+<article class:list={['article-card', `accent-${post.accent}`, { compact }]} data-post-card data-category={post.category}>
+  <a class="article-card-link" href={`/blog/${post.slug}/`} aria-label={`阅读：${post.title}`}>
+    <div class="article-visual" aria-hidden="true">
+      <span class="visual-index">{post.coverLabel}</span>
+      <span class="visual-symbol">{post.accent === 'coral' ? '✳' : post.accent === 'blue' ? '↗' : post.accent === 'green' ? '◒' : '✦'}</span>
+      <span class="visual-line"></span>
+    </div>
+    <div class="article-card-content">
+      <div class="article-meta">
+        <span>{post.category}</span>
+        <span>{post.dateLabel}</span>
+      </div>
+      <h2>{post.title}</h2>
+      <p>{post.excerpt}</p>
+      <div class="article-card-bottom">
+        <span>{post.readTime}</span>
+        <span class="arrow-link">阅读文章 <span>↗</span></span>
+      </div>
+    </div>
+  </a>
+</article>

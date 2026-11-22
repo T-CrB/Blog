@@ -1,0 +1,25 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { projects } from '../../data';
+---
+
+<BaseLayout title="项目" description="TCrB 的个人项目：数字花园、小工具与开放式设计系统。">
+  <section class="site-shell page-hero">
+    <span class="eyebrow">Selected work / 2025—2026</span>
+    <h1>把兴趣做成<br /><em>小而具体的东西。</em></h1>
+    <p>我喜欢把模糊的好奇心，变成可以打开、可以使用、也可以继续修改的东西。下面是一些正在成长中的项目。</p>
+  </section>
+
+  <section class="site-shell page-section-tight">
+    <div class="project-list">
+      {projects.map((project, index) => (
+        <a class="project-card" href={project.href}>
+          <span class="project-number">0{index + 1}</span>
+          <div><span class="project-type">{project.type}</span><h2>{project.title}</h2><div class="tag-list">{project.tags.map((tag) => <span>{tag}</span>)}</div></div>
+          <p>{project.description}</p>
+          <span class="project-year">{project.year} ↗</span>
+        </a>
+      ))}
+    </div>
+  </section>
+</BaseLayout>
