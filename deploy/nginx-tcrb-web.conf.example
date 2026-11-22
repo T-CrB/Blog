@@ -3,7 +3,7 @@ server {
     listen [::]:80;
 
     server_name example.com www.example.com;
-    root /var/www/tcrb-web;
+    root /var/www/tcrb-web-deploy/current;
     index index.html;
 
     location / {
@@ -12,6 +12,11 @@ server {
 
     location = /404.html {
         internal;
+    }
+
+    location = /_deploy-revision.txt {
+        add_header Cache-Control "no-store" always;
+        try_files $uri =404;
     }
 
     location /_astro/ {

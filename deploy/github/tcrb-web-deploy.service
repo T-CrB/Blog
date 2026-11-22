@@ -1,0 +1,19 @@
+[Unit]
+Description=Pull the Astro site build from GitHub Releases
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=blogdeploy
+StateDirectory=tcrb-web-deploy
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/tcrb-web-deploy
+ExecStart=/usr/bin/python3 -B /usr/local/lib/tcrb-web-deploy/pull.py
+TimeoutStartSec=90s
+UMask=0022
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/tcrb-web-deploy

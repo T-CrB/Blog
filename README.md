@@ -37,3 +37,7 @@ npm run dev
 ```bash
 npm run build
 ```
+
+## 自动部署
+
+合并到 `main` 后自动构建，阿里云 ECS 从 GitHub Releases 拉取并更新静态站。首次安装与验证见 [部署指南](deploy/README.md)。
