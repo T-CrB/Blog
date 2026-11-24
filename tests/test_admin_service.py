@@ -8,12 +8,14 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from html import unescape
 from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlsplit
 from wsgiref.util import setup_testing_defaults
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deploy" / "admin"))
+from article_editor import TICKET_AGE  # noqa: E402
 from admin_service import (  # noqa: E402
     Admin, Config, ExpiringIds, FLOW_AGE, FLOW_COOKIE, GitHub, SESSION_AGE, SESSION_COOKIE, TOKEN_URL, USER_URL,
 )
@@ -32,6 +34,26 @@ class FakeUpstream:
         if isinstance(reply, Exception):
             raise reply
         return io.BytesIO(json.dumps(reply).encode("utf-8"))
+
+
+class FakePublisher:
+    def __init__(self):
+        self.reads = []
+        self.published = []
+        self.article = None
+        self.sha = "a" * 40
+
+    def list_slugs(self):
+        self.reads.append("list")
+        return ["test-article"]
+
+    def read(self, slug):
+        self.reads.append(slug)
+        return self.article, self.sha
+
+    def publish(self, article, base):
+        self.published.append((article, base))
+        return 44
 
 
 class AdminTest(unittest.TestCase):
@@ -223,6 +245,132 @@ class AdminTest(unittest.TestCase):
                                      HTTPError(USER_URL, 401, "must not log message", {}, None)],
                                     "user_lookup", "http_401")
         self.assertEqual([req.full_url for req in self.upstream.requests], [TOKEN_URL, USER_URL])
+
+    def enable_editor(self):
+        self.publisher = FakePublisher()
+        self.app = Admin(self.config, self.app.github, lambda: self.now, publisher=self.publisher)
+
+    def get_editor_form(self, session):
+        page = self.request("/admin/article", cookie=session)
+        self.assertEqual(page.status, 200)
+        self.assertEqual(page.headers["Referrer-Policy"], "same-origin")
+        return {**self.editor_tokens(page),
+                "title": "A test & a preview", "slug": "test-article", "excerpt": "Test summary",
+                "category": "Notes", "date": "2026-11-24", "readTime": "3 min read", "accent": "green",
+                "coverLabel": "01 / TEST", "tags": "Astro, GitHub", "featured": "1",
+                "body": "## 小标题\n\n这里是 <strong>普通文本</strong>。\n\n- 第一项\n- 第二项"}
+
+    def editor_tokens(self, response):
+        return dict(re.findall(r'name="(csrf|ticket|base)" value="([^"]*)"', response.body))
+
+    def post_article(self, session, values, operation):
+        return self.request(f"/admin/article/{operation}", cookie=session, method="POST",
+                            body=urlencode(values), HTTP_ORIGIN=self.config.origin)
+
+    def test_editor_does_not_contact_github_for_guests_or_when_disabled(self):
+        session, _ = self.owner_session()
+        self.assertEqual(self.request("/admin/articles", cookie=session).status, 404)
+        self.enable_editor()
+        self.assertEqual(self.request("/admin/articles").status, 403)
+        self.assertEqual(self.request("/admin/article/publish", method="POST").status, 403)
+        self.assertEqual(self.publisher.reads, [])
+        self.assertEqual(self.publisher.published, [])
+
+    def test_owner_can_preview_and_publish_exactly_once(self):
+        self.enable_editor()
+        session, _ = self.owner_session()
+        self.assertIn("管理文章", self.request(cookie=session).body)
+        self.assertIn("test-article", self.request("/admin/articles", cookie=session).body)
+        values = self.get_editor_form(session)
+        preview = self.post_article(session, values, "preview")
+        self.assertEqual(preview.status, 200)
+        self.assertIn("<h3>小标题</h3>", preview.body)
+        self.assertIn("&lt;strong&gt;普通文本&lt;/strong&gt;", preview.body)
+        self.assertNotIn("<strong>普通文本</strong>", preview.body)
+        self.assertEqual(self.publisher.published, [])
+        refreshed = self.editor_tokens(preview)
+        self.assertNotEqual(refreshed["ticket"], values["ticket"])
+        self.assertEqual(self.post_article(session, values, "publish").status, 409)
+        values.update(refreshed)
+        result = self.post_article(session, values, "publish")
+        self.assertEqual(result.status, 201)
+        self.assertIn("https://github.com/T-CrB/Blog/pull/44", result.body)
+        self.assertEqual(self.publisher.published[0][0]["tags"], ["Astro", "GitHub"])
+        replay = self.post_article(session, values, "publish")
+        self.assertEqual(replay.status, 409)
+        self.assertEqual(self.editor_tokens(replay)["ticket"], "")
+        self.assertEqual(len(self.publisher.published), 1)
+
+    def test_preview_refreshes_the_ticket_when_it_is_about_to_expire(self):
+        self.enable_editor()
+        session, _ = self.owner_session()
+        values = self.get_editor_form(session)
+        self.now += TICKET_AGE - 1
+        preview = self.post_article(session, values, "preview")
+        self.assertEqual(preview.status, 200)
+        self.now += 2
+        self.assertEqual(self.post_article(session, {**values, **self.editor_tokens(preview)}, "publish").status, 201)
+
+    def test_expired_ticket_preserves_form_and_requires_new_preview(self):
+        self.enable_editor()
+        session, _ = self.owner_session()
+        values = self.get_editor_form(session)
+        self.now += TICKET_AGE + 1
+        stale = self.post_article(session, values, "publish")
+        self.assertEqual(stale.status, 409)
+        self.assertIn(values["title"], unescape(stale.body))
+        self.assertIn(values["body"], unescape(stale.body))
+        recovery = {**values, **self.editor_tokens(stale)}
+        self.assertEqual(recovery["ticket"], "")
+        self.assertEqual(self.post_article(session, recovery, "publish").status, 409)
+        self.assertEqual(self.publisher.published, [])
+        preview = self.post_article(session, recovery, "preview")
+        self.assertEqual(preview.status, 200)
+        self.assertEqual(self.post_article(session, {**values, **self.editor_tokens(preview)}, "publish").status, 201)
+        self.assertEqual(len(self.publisher.published), 1)
+
+    def test_title_only_edit_preserves_body_and_tags_from_the_original_blob(self):
+        self.enable_editor()
+        session, _ = self.owner_session()
+        values = self.get_editor_form(session)
+        body = [{"type": "p", "text": "## This is literal text"},
+                {"type": "quote", "text": "A quote", "cite": "An author"}]
+        tags = ["HTML、CSS"]
+        self.publisher.article = {
+            **{name: values[name] for name in ("slug", "title", "excerpt", "category", "date", "readTime", "accent", "coverLabel")},
+            "body": body, "tags": tags,
+        }
+        html = self.request("/admin/article?slug=test-article", cookie=session)
+        self.assertEqual(html.status, 200)
+        text = "## This is literal text\n\n> A quote\n> An author"
+        self.assertIn(text, unescape(html.body))
+        values.update(self.editor_tokens(html), title="Only the title changed", tags=tags[0], body=text.replace("\n", "\r\n"))
+        self.assertEqual(self.post_article(session, values, "publish").status, 201)
+        [(article, base)] = self.publisher.published
+        self.assertEqual(base, self.publisher.sha)
+        self.assertEqual(article["body"], body)
+        self.assertEqual(article["tags"], tags)
+
+    def test_stale_article_retains_input_without_publishing(self):
+        self.enable_editor()
+        session, _ = self.owner_session()
+        values = self.get_editor_form(session)
+        values["base"] = "b" * 40
+        result = self.post_article(session, values, "publish")
+        self.assertEqual(result.status, 409)
+        self.assertIn(values["body"], unescape(result.body))
+        self.assertEqual(self.publisher.published, [])
+
+    def test_publish_rejects_bad_origin_csrf_and_path(self):
+        self.enable_editor()
+        session, _ = self.owner_session()
+        values = self.get_editor_form(session)
+        for changes, origin, status in (({}, "https://other.example", 403), ({"csrf": "错"}, self.config.origin, 403),
+                                        ({"slug": "../index"}, self.config.origin, 422)):
+            result = self.request("/admin/article/publish", cookie=session, method="POST",
+                                  body=urlencode({**values, **changes}), HTTP_ORIGIN=origin)
+            self.assertEqual(result.status, status)
+        self.assertEqual(self.publisher.published, [])
 
     def test_logout_needs_session_and_csrf_and_revokes_session(self):
         session, _ = self.owner_session()

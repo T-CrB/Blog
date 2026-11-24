@@ -40,7 +40,7 @@ elif [[ ! -s "$config" || ! -s "$credential" ]]; then
     exit 1
 fi
 
-install -m 0644 -- "$src/admin_service.py" "$app/admin_service.py"
+install -m 0644 -- "$src/admin_service.py" "$src/article_editor.py" "$src/github_editor.py" "$app/"
 install -m 0644 -- "$src/tcrb-blog-admin.service" /etc/systemd/system/tcrb-blog-admin.service
 systemctl daemon-reload
 systemctl enable tcrb-blog-admin.service

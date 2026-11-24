@@ -22,6 +22,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from article_editor import ArticleEditor, EDITOR_METHODS, TICKET_AGE
+from github_editor import GitHubEditor
+
 AUTH_URL = "https://github.com/login/oauth/authorize"
 TOKEN_URL = "https://github.com/login/oauth/access_token"
 USER_URL = "https://api.github.com/user"
@@ -34,7 +37,7 @@ FLOW_AGE = 10 * 60
 SESSION_AGE = 8 * 60 * 60
 OPAQUE_ID = re.compile(r"[A-Za-z0-9_-]{43}")
 METHODS = {"/admin/": ("GET", "HEAD"), "/admin/login": ("GET",),
-           "/admin/callback": ("GET",), "/admin/logout": ("POST",)}
+           "/admin/callback": ("GET",), "/admin/logout": ("POST",), **EDITOR_METHODS}
 LOG = logging.getLogger(__name__)
 
 
@@ -224,7 +227,7 @@ def valid_logout(environ, expected):
         return False
 
 
-def page(title, text, action=""):
+def page(title, text, action="", *, content="", wide=False):
     return f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow"><title>{escape(title)} · TCrB</title>
@@ -236,9 +239,17 @@ main {{max-width:34rem;margin:auto;padding:clamp(1.5rem,5vw,3rem);border:1px sol
 .label {{font:0.78rem ui-monospace,monospace;letter-spacing:.14em;color:var(--accent);margin:0 0 1rem}} h1 {{font-size:clamp(1.8rem,6vw,2.5rem);line-height:1.2;margin:0}} p {{color:var(--soft)}}
 .actions {{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;margin-top:1.5rem}} form {{margin:0}}
 a,button {{font:inherit;color:inherit}} .button {{display:inline-block;padding:.52rem 1rem;border:1px solid var(--ink);border-radius:2rem;text-decoration:none;background:var(--ink);color:var(--card);cursor:pointer}}
+.wide {{max-width:60rem}} body:has(.wide) {{padding-top:clamp(1rem,4vh,3rem)}}
+.editor {{margin-top:1.5rem;border-top:1px solid var(--line);padding-top:1.25rem}}
+.editor-grid {{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));gap:.75rem 1rem;margin-bottom:1.15rem}}
+.editor label {{display:block;font-weight:650}} .editor input:not([type=checkbox]),.editor select,.editor textarea {{display:block;width:100%;padding:.6rem;margin-top:.25rem;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:.25rem;font:inherit}}
+.editor textarea {{font:1rem/1.6 ui-monospace,monospace;resize:vertical}} .editor-hint {{font-size:.9rem;margin:0}}
+.editor-check {{align-self:end;padding:.65rem 0}} .editor-notice {{border-left:3px solid var(--accent);padding:.65rem 1rem}}
+.article-list {{line-height:2.2;padding-left:1.2rem;overflow-wrap:anywhere}} .article-preview {{padding:1rem 1.25rem;margin-top:1.5rem;border:1px solid var(--line);overflow-wrap:anywhere}}
+.article-preview blockquote {{margin-left:0;padding-left:1rem;border-left:2px solid var(--line)}} .article-preview cite {{display:block}}
 :focus-visible {{outline:2px solid var(--accent);outline-offset:4px}}
-</style><main><p class="label">TCRB / ADMIN</p><h1>{escape(title)}</h1>
-<p>{escape(text)}</p><div class="actions">{action}<a href="/blog/">返回博客</a></div></main></html>"""
+</style><main class="{'wide' if wide else ''}"><p class="label">TCRB / ADMIN</p><h1>{escape(title)}</h1>
+<p>{escape(text)}</p><div class="actions">{action}<a href="/blog/">返回博客</a></div>{content}</main></html>"""
 
 
 LOGIN = '<a class="button" href="/admin/login">用 GitHub 登录</a>'
@@ -246,15 +257,16 @@ RETRY = '<a class="button" href="/admin/">返回登录页</a>'
 HEADERS = (
     ("Cache-Control", "no-store"),
     ("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"),
-    ("Referrer-Policy", "no-referrer"),
     ("X-Content-Type-Options", "nosniff"),
 )
 
 
 class Admin:
-    def __init__(self, config, github=None, clock=time.monotonic):
+    def __init__(self, config, github=None, clock=time.monotonic, *, publisher=None):
         self.config = config
         self.github = github or GitHub(config)
+        self.editor = (ArticleEditor(publisher, config.origin, page, ExpiringIds(TICKET_AGE, 64, clock))
+                       if publisher is not None else None)
         self.flows = ExpiringIds(FLOW_AGE, 512, clock, evict_oldest=False)
         self.sessions = ExpiringIds(SESSION_AGE, 32, clock)
 
@@ -300,6 +312,12 @@ class Admin:
 
         key = cookie_id(env, SESSION_COOKIE)
         session = self.sessions.read(key)
+        if path in EDITOR_METHODS:
+            if not session:
+                return 403, page("请先登录站长账号", "只允许已验证的站长使用文章编辑器。", RETRY), []
+            if self.editor is None:
+                return 404, page("尚未启用文章编辑", "后台仍可验证站长身份。", RETRY), []
+            return self.editor.handle(path, env, session[1])
         if path == "/admin/callback":
             return self._callback(env, key)
         if path == "/admin/logout":
@@ -320,21 +338,39 @@ class Admin:
         logout = ('<form method="post" action="/admin/logout">'
                   f'<input type="hidden" name="csrf" value="{session[1]}">'
                   '<button class="button" type="submit">退出登录</button></form>')
-        return 200, page("站长 · 已验证", f"当前账号：@{session[0]}。本阶段仅验证身份，尚未开放编辑和发布。", logout), []
+        if self.editor is not None:
+            link = '<a class="button" href="/admin/articles">管理文章</a>'
+            return 200, page("站长 · 已验证", f"当前账号：@{session[0]}。文章修改会通过 GitHub PR 提交。", link + logout), []
+        return 200, page("站长 · 已验证", f"当前账号：@{session[0]}。文章编辑尚未配置。", logout), []
 
     def __call__(self, environ, start_response):
         status, body, headers = self._route(environ)
         data = body.encode("utf-8")
+        # Same-origin form navigations send a null Origin under no-referrer.
+        referrer_policy = "same-origin" if environ.get("PATH_INFO") in EDITOR_METHODS else "no-referrer"
         start_response(f"{status} {HTTPStatus(status).phrase}", [*HEADERS, *headers,
-            ("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(data)))])
+            ("Referrer-Policy", referrer_policy), ("Content-Type", "text/html; charset=utf-8"),
+            ("Content-Length", str(len(data)))])
         return [b"" if environ.get("REQUEST_METHOD") == "HEAD" else data]
 
 
 def create_app():
     directory = Path(os.environ["CREDENTIALS_DIRECTORY"])
-    return Admin(Config(
+    config = Config(
         origin=os.environ["ADMIN_ORIGIN"],
         client_id=os.environ["GITHUB_CLIENT_ID"],
         client_secret=(directory / "github-client-secret").read_text(encoding="ascii").strip(),
         owner_id=int(os.environ["GITHUB_OWNER_ID"]),
-    ))
+    )
+    app = os.environ.get("GITHUB_EDITOR_CLIENT_ID", "")
+    installation = os.environ.get("GITHUB_EDITOR_INSTALLATION_ID", "")
+    key = directory / "github-editor-key"
+    publisher = None
+    if app or installation or key.is_file():
+        try:
+            if not key.is_file():
+                raise ValueError("Missing editor credential")
+            publisher = GitHubEditor(app, installation, key, build_opener(NoRedirect()))
+        except ValueError:
+            LOG.warning("Article editor is disabled: incomplete GitHub App configuration")
+    return Admin(config, publisher=publisher)

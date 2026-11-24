@@ -6,9 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from provenance import MANIFEST_PROOF, SETUP_PROOF, verify
 from site_release import ARCHIVE_NAME, MANIFEST_NAME, SETUP_NAME, check_archive, read_manifest, sha256_file
 
-ASSET_NAMES = (ARCHIVE_NAME, MANIFEST_NAME, SETUP_NAME)
+ASSET_NAMES = (ARCHIVE_NAME, MANIFEST_NAME, SETUP_NAME, MANIFEST_PROOF, SETUP_PROOF)
 
 
 def release_command(repository, *args, **kwargs):
@@ -39,9 +40,13 @@ def publish(repository, revision, sequence, bundle):
     if (manifest.revision, manifest.sequence) != (revision, sequence):
         raise ValueError("Build artifact does not belong to this workflow run")
     check_archive(bundle / ARCHIVE_NAME, manifest)
+    # Reject an incomplete or unverifiable production bundle before editing any Release.
+    for subject, proof in ((MANIFEST_NAME, MANIFEST_PROOF), (SETUP_NAME, SETUP_PROOF)):
+        verify(bundle / subject, bundle / proof, revision, bundle)
     setup_digest = sha256_file(bundle / SETUP_NAME)
     title = f"Blog production · {revision[:12]}"
     notes = (f"Static site built from `main` at `{revision}`.\n\n"
+             "Verify the included GitHub Actions attestations before deploying or installing.\n\n"
              f"ECS setup SHA-256: `{setup_digest}`")
 
     release = existing_release(repository, manifest.tag)
