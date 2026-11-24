@@ -1,5 +1,8 @@
 # Paste only inside the blog's HTTPS server { ... }, not the HTTP redirect block.
 location ^~ /admin/ {
+    # Define tcrb_admin_login in the http block first (see nginx-admin-rate-limit.conf.example).
+    limit_req zone=tcrb_admin_login burst=5 nodelay;
+    limit_req_status 429;
     access_log off;
     proxy_cache off;
     proxy_intercept_errors off;

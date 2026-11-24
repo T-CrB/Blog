@@ -155,30 +155,38 @@ class GitHub:
 class ExpiringIds:
     """Bounded, thread-safe state shared by the login service's threads."""
 
-    def __init__(self, ttl, capacity, clock):
+    def __init__(self, ttl, capacity, clock, *, evict_oldest=True):
         self.ttl, self.capacity, self.clock = ttl, capacity, clock
+        self.evict_oldest = evict_oldest
         self.entries = {}
         self.lock = threading.Lock()
 
-    def issue(self, value):
+    def issue(self, value, *, replace=""):
         with self.lock:
             now = self.clock()
             self.entries = {key: item for key, item in self.entries.items() if item[0] > now}
-            if len(self.entries) >= self.capacity:
+            if len(self.entries) >= self.capacity and replace not in self.entries:
+                if not self.evict_oldest:
+                    return None
                 self.entries.pop(next(iter(self.entries)))
+            self.entries.pop(replace, None)
             key = secrets.token_urlsafe(32)
             self.entries[key] = (now + self.ttl, value)
             return key
 
-    def read(self, key, *, consume=False):
+    def read(self, key, *, consume=False, matches=None):
         with self.lock:
             entry = self.entries.get(key)
             if not entry:
                 return None
-            expired = entry[0] <= self.clock()
-            if consume or expired:
+            if entry[0] <= self.clock():
                 self.entries.pop(key)
-            return None if expired else entry[1]
+                return None
+            if matches is not None and not matches(entry[1]):
+                return None
+            if consume:
+                self.entries.pop(key)
+            return entry[1]
 
 
 def cookie(name, key, age):
@@ -247,19 +255,23 @@ class Admin:
     def __init__(self, config, github=None, clock=time.monotonic):
         self.config = config
         self.github = github or GitHub(config)
-        self.flows = ExpiringIds(FLOW_AGE, 512, clock)
+        self.flows = ExpiringIds(FLOW_AGE, 512, clock, evict_oldest=False)
         self.sessions = ExpiringIds(SESSION_AGE, 32, clock)
 
     def _callback(self, environ, session_id):
         clear = cookie(FLOW_COOKIE, "", 0)
-        flow = self.flows.read(cookie_id(environ, FLOW_COOKIE), consume=True)
         try:
             query = fields(environ.get("QUERY_STRING", ""))
         except ValueError:
             query = {}
         state, code = one(query, "state"), one(query, "code")
-        if not (flow and OPAQUE_ID.fullmatch(state) and hmac.compare_digest(flow[0], state)):
-            return 400, page("登录请求无效", "登录请求不匹配或已过期，请重新登录。", RETRY), [clear]
+        flow = None
+        if OPAQUE_ID.fullmatch(state):
+            flow = self.flows.read(cookie_id(environ, FLOW_COOKIE), consume=True,
+                                   matches=lambda entry: hmac.compare_digest(entry[0], state))
+        if not flow:
+            # An old callback must not invalidate a newer login in the same browser.
+            return 400, page("登录请求无效", "登录请求不匹配或已过期，请继续最近一次登录，或重新登录。", RETRY), []
         if "error" in query or not re.fullmatch(r"[A-Za-z0-9._~-]{1,512}", code):
             return 400, page("未完成 GitHub 登录", "请返回并重新登录。", RETRY), [clear]
         try:
@@ -298,9 +310,10 @@ class Admin:
         if path == "/admin/login":
             if session:
                 return 303, "", [("Location", "/admin/")]
-            self.flows.read(cookie_id(env, FLOW_COOKIE), consume=True)
             state, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
-            flow_id = self.flows.issue((state, verifier))
+            flow_id = self.flows.issue((state, verifier), replace=cookie_id(env, FLOW_COOKIE))
+            if flow_id is None:
+                return 503, page("暂时无法开始登录", "当前登录请求较多，请稍后重试。", RETRY), [("Retry-After", "60")]
             return 302, "", [("Location", self.github.authorize(state, verifier)), cookie(FLOW_COOKIE, flow_id, FLOW_AGE)]
         if not session:
             return 200, page("站长登录", "博客对所有人开放，只有站长能进入管理后台。", LOGIN), []

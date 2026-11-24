@@ -15,7 +15,7 @@ from wsgiref.util import setup_testing_defaults
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deploy" / "admin"))
 from admin_service import (  # noqa: E402
-    Admin, Config, FLOW_AGE, FLOW_COOKIE, GitHub, SESSION_AGE, SESSION_COOKIE, TOKEN_URL, USER_URL,
+    Admin, Config, ExpiringIds, FLOW_AGE, FLOW_COOKIE, GitHub, SESSION_AGE, SESSION_COOKIE, TOKEN_URL, USER_URL,
 )
 
 
@@ -62,8 +62,8 @@ class AdminTest(unittest.TestCase):
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         return response
 
-    def begin(self):
-        response = self.request("/admin/login")
+    def begin(self, cookie=""):
+        response = self.request("/admin/login", cookie=cookie)
         self.assertEqual(response.status, 302)
         url = urlsplit(response.headers["Location"])
         self.assertEqual((url.scheme, url.netloc, url.path), ("https", "github.com", "/login/oauth/authorize"))
@@ -136,9 +136,36 @@ class AdminTest(unittest.TestCase):
         flow, authorize = self.begin()
         state = authorize["state"][0]
         self.assertEqual(self.callback("", state).status, 400)
-        self.assertEqual(self.callback(flow, "x" * 43).status, 400)
-        self.assertEqual(self.callback(flow, state).status, 400)
+        rejected = self.callback(flow, "x" * 43)
+        self.assertEqual(rejected.status, 400)
+        self.assertEqual(rejected.cookies, [])
         self.assertEqual(self.upstream.requests, [])
+        self.upstream.replies.extend([{"access_token": "gho_token"}, {"id": 101, "login": "T-CrB"}])
+        self.assertEqual(self.callback(flow, state).status, 303)
+
+    def test_old_callback_leaves_new_login_intact(self):
+        previous, old = self.begin()
+        current, new = self.begin(previous)
+        rejected = self.callback(current, old["state"][0])
+        self.assertEqual(rejected.status, 400)
+        self.assertEqual(rejected.cookies, [])
+        self.assertEqual(self.upstream.requests, [])
+        self.upstream.replies.extend([{"access_token": "gho_token"}, {"id": 101, "login": "T-CrB"}])
+        self.assertEqual(self.callback(current, new["state"][0]).status, 303)
+
+    def test_full_flow_store_rejects_new_logins_without_evicting_active_flows(self):
+        self.app.flows = ExpiringIds(FLOW_AGE, 2, lambda: self.now, evict_oldest=False)
+        owner, _ = self.begin()
+        self.begin()
+        rejected = self.request("/admin/login")
+        self.assertEqual(rejected.status, 503)
+        self.assertEqual(rejected.cookies, [])
+        self.assertIn("Retry-After", rejected.headers)
+        # The same browser can replace its own pending login even at capacity.
+        owner, auth = self.begin(owner)
+        self.upstream.replies.extend([{"access_token": "gho_token"}, {"id": 101, "login": "T-CrB"}])
+        self.assertEqual(self.callback(owner, auth["state"][0]).status, 303)
+        self.begin()
 
     def test_callback_is_single_use(self):
         flow, authorize = self.begin()
