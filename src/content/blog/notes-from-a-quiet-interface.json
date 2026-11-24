@@ -1,0 +1,37 @@
+{
+  "slug": "notes-from-a-quiet-interface",
+  "title": "安静的界面，清晰的动作",
+  "excerpt": "关于按钮、层级和微小反馈：一个界面如何在不打扰人的前提下，告诉你下一步是什么。",
+  "category": "Interface craft",
+  "readTime": "5 min read",
+  "coverLabel": "03 / interface",
+  "date": "2026-10-28",
+  "accent": "green",
+  "tags": [
+    "界面",
+    "产品"
+  ],
+  "body": [
+    {
+      "type": "p",
+      "text": "好的界面不是把所有可能都展示出来，而是在正确的时机，把正确的下一步交到用户手里。"
+    },
+    {
+      "type": "h2",
+      "text": "安静不等于没有个性"
+    },
+    {
+      "type": "p",
+      "text": "我喜欢克制的页面，但克制并不意味着把颜色、声音和动效全部拿走。安静的界面仍然可以有温度，只是它不会为了证明自己存在而抢走注意力。"
+    },
+    {
+      "type": "quote",
+      "text": "Make the important things obvious, and the rest quiet.",
+      "cite": "— A note from my sketchbook"
+    },
+    {
+      "type": "p",
+      "text": "在实际工作中，我会先问三个问题：用户现在知道自己在哪里吗？他知道下一步能做什么吗？完成动作后，界面有没有给出足够的回应？"
+    }
+  ]
+}

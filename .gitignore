@@ -5,6 +5,12 @@ dist/
 .env.*
 !.env.example
 
+# Server-side admin credentials must not be committed.
+*.private-key.pem
+/deploy/admin/*.pem
+/deploy/admin/*.conf
+/deploy/admin/github-client-secret
+
 # 日常开发中间产物，仅保留说明文件
 dev-workbench/*
 !dev-workbench/README.md

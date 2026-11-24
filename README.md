@@ -27,7 +27,8 @@ npm run dev
 
 - `src/components/`：可复用的页头、页脚、文章卡片
 - `src/pages/`：首页、文章、项目、实验室、关于页面
-- `src/data.ts`：当前版本的示例文章、项目和实验数据；后续可迁移为 `src/content/blog/` 的 Markdown 内容集合
+- `src/content/blog/`：文章资料，每篇文章一个 JSON 文件，按发布日期展示
+- `src/data.ts`：文章索引、项目和实验数据
 - `src/styles/global.css`：主题变量、组件样式与响应式布局
 - `public/`：后续放置图片、图标、字体等静态资源
 - `labs/`：独立实验项目
@@ -44,4 +45,6 @@ npm run build
 
 ## 站长登录
 
-后台身份验证与静态站独立部署，仅允许指定的 GitHub 账号登录，不申请仓库写权限。配置方法见 [站长登录指南](deploy/admin/README.md)。
+后台身份验证与静态站独立部署，仅允许指定的 GitHub 账号登录。登录用的 OAuth App 不申请仓库写权限。配置见 [站长登录指南](deploy/admin/README.md)。
+
+可选的 [网页文章编辑器](deploy/admin/EDITOR.md) 支持新增、编辑和预览文章，使用独立的 GitHub App 创建 PR。合并后仍由原有 CI/CD 自动上线。

@@ -34,6 +34,20 @@ class FakeUpstream:
         return io.BytesIO(json.dumps(reply).encode("utf-8"))
 
 
+class FakePublisher:
+    def __init__(self):
+        self.reads = []
+        self.published = []
+
+    def list_slugs(self):
+        self.reads.append("list")
+        return ["test-article"]
+
+    def publish(self, article, base):
+        self.published.append((article, base))
+        return 44
+
+
 class AdminTest(unittest.TestCase):
     def setUp(self):
         self.now = 100
@@ -196,6 +210,60 @@ class AdminTest(unittest.TestCase):
                                      HTTPError(USER_URL, 401, "must not log message", {}, None)],
                                     "user_lookup", "http_401")
         self.assertEqual([req.full_url for req in self.upstream.requests], [TOKEN_URL, USER_URL])
+
+    def enable_editor(self):
+        self.publisher = FakePublisher()
+        self.app = Admin(self.config, self.app.github, lambda: self.now, publisher=self.publisher)
+
+    def get_editor_form(self, session):
+        page = self.request("/admin/article", cookie=session)
+        self.assertEqual(page.status, 200)
+        self.assertEqual(page.headers["Referrer-Policy"], "same-origin")
+        return {**dict(re.findall(r'name="(csrf|ticket|base)" value="([^"]*)"', page.body)),
+                "title": "A test & a preview", "slug": "test-article", "excerpt": "Test summary",
+                "category": "Notes", "date": "2026-11-24", "readTime": "3 min read", "accent": "green",
+                "coverLabel": "01 / TEST", "tags": "Astro, GitHub", "featured": "1",
+                "body": "## 小标题\n\n这里是 <strong>普通文本</strong>。\n\n- 第一项\n- 第二项"}
+
+    def test_editor_does_not_contact_github_for_guests_or_when_disabled(self):
+        session, _ = self.owner_session()
+        self.assertEqual(self.request("/admin/articles", cookie=session).status, 404)
+        self.enable_editor()
+        self.assertEqual(self.request("/admin/articles").status, 403)
+        self.assertEqual(self.request("/admin/article/publish", method="POST").status, 403)
+        self.assertEqual(self.publisher.reads, [])
+        self.assertEqual(self.publisher.published, [])
+
+    def test_owner_can_preview_and_publish_exactly_once(self):
+        self.enable_editor()
+        session, _ = self.owner_session()
+        self.assertIn("管理文章", self.request(cookie=session).body)
+        self.assertIn("test-article", self.request("/admin/articles", cookie=session).body)
+        values = self.get_editor_form(session)
+        request = {"cookie": session, "method": "POST", "body": urlencode(values), "HTTP_ORIGIN": self.config.origin}
+        preview = self.request("/admin/article/preview", **request)
+        self.assertEqual(preview.status, 200)
+        self.assertIn("<h3>小标题</h3>", preview.body)
+        self.assertIn("&lt;strong&gt;普通文本&lt;/strong&gt;", preview.body)
+        self.assertNotIn("<strong>普通文本</strong>", preview.body)
+        self.assertEqual(self.publisher.published, [])
+        result = self.request("/admin/article/publish", **request)
+        self.assertEqual(result.status, 201)
+        self.assertIn("https://github.com/T-CrB/Blog/pull/44", result.body)
+        self.assertEqual(self.publisher.published[0][0]["tags"], ["Astro", "GitHub"])
+        self.assertEqual(self.request("/admin/article/publish", **request).status, 403)
+        self.assertEqual(len(self.publisher.published), 1)
+
+    def test_publish_rejects_bad_origin_csrf_and_path(self):
+        self.enable_editor()
+        session, _ = self.owner_session()
+        values = self.get_editor_form(session)
+        for changes, origin, status in (({}, "https://other.example", 403), ({"csrf": "错"}, self.config.origin, 403),
+                                        ({"slug": "../index"}, self.config.origin, 422)):
+            result = self.request("/admin/article/publish", cookie=session, method="POST",
+                                  body=urlencode({**values, **changes}), HTTP_ORIGIN=origin)
+            self.assertEqual(result.status, status)
+        self.assertEqual(self.publisher.published, [])
 
     def test_logout_needs_session_and_csrf_and_revokes_session(self):
         session, _ = self.owner_session()
