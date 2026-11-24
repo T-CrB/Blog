@@ -1,2 +1,3 @@
 /.github/workflows/*.yml text eol=lf
 /deploy/github/* text eol=lf
+/deploy/admin/* text eol=lf

@@ -41,3 +41,7 @@ npm run build
 ## 自动部署
 
 合并到 `main` 后自动构建，阿里云 ECS 从 GitHub Releases 拉取并更新静态站。首次安装与验证见 [部署指南](deploy/README.md)。
+
+## 站长登录
+
+后台身份验证与静态站独立部署，仅允许指定的 GitHub 账号登录，不申请仓库写权限。配置方法见 [站长登录指南](deploy/admin/README.md)。
