@@ -10,6 +10,13 @@ if [[ ! -f /opt/tcrb-blog-admin/article_editor.py || ! -f /opt/tcrb-blog-admin/g
     echo 'Upgrade the admin service with install-ecs.sh first.' >&2
     exit 1
 fi
+deploy=/usr/local/lib/tcrb-web-deploy
+if [[ ! -f "$deploy/provenance.py" ]] || ! systemctl is-enabled --quiet tcrb-web-deploy.timer ||
+    ! systemctl is-active --quiet tcrb-web-deploy.timer ||
+    ! runuser -u blogdeploy -- /usr/bin/python3 -B "$deploy/pull.py" --verify-current; then
+    echo 'Upgrade the production puller and deploy a verified build before enabling the editor.' >&2
+    exit 1
+fi
 if [[ ! -x /usr/bin/openssl ]] || ! /usr/bin/openssl rsa -in "$1" -passin pass: -check -noout >/dev/null 2>&1; then
     echo 'Use the RSA private key file downloaded for the dedicated GitHub App.' >&2
     exit 1

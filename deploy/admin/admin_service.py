@@ -22,7 +22,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from article_editor import ArticleEditor, EDITOR_METHODS
+from article_editor import ArticleEditor, EDITOR_METHODS, TICKET_AGE
 from github_editor import GitHubEditor
 
 AUTH_URL = "https://github.com/login/oauth/authorize"
@@ -265,7 +265,7 @@ class Admin:
     def __init__(self, config, github=None, clock=time.monotonic, *, publisher=None):
         self.config = config
         self.github = github or GitHub(config)
-        self.editor = (ArticleEditor(publisher, config.origin, page, ExpiringIds(60 * 60, 64, clock))
+        self.editor = (ArticleEditor(publisher, config.origin, page, ExpiringIds(TICKET_AGE, 64, clock))
                        if publisher is not None else None)
         self.flows = ExpiringIds(FLOW_AGE, 512, clock, evict_oldest=False)
         self.sessions = ExpiringIds(SESSION_AGE, 32, clock)

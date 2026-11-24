@@ -5,9 +5,13 @@ if [[ "$EUID" != 0 ]]; then
   echo 'Run this script as root (or with sudo) from the verified ECS setup bundle.' >&2
   exit 1
 fi
-for cmd in curl python3 systemctl runuser; do
+for cmd in curl gh python3 systemctl runuser; do
   command -v "$cmd" >/dev/null || { echo "Please install $cmd first." >&2; exit 1; }
 done
+if ! gh attestation verify --help | grep -- --source-digest >/dev/null; then
+  echo 'Install a current GitHub CLI with artifact attestation verification support first.' >&2
+  exit 1
+fi
 
 cd -- "$(dirname -- "$0")"
 site=/var/www/tcrb-web-deploy
@@ -27,7 +31,7 @@ if ! id blogdeploy >/dev/null 2>&1; then
   useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin blogdeploy
 fi
 install -d -m 0755 -o root -g root "$app"
-install -m 0644 -o root -g root site_release.py pull.py "$app/"
+install -m 0644 -o root -g root site_release.py provenance.py pull.py "$app/"
 install -d -m 0755 -o blogdeploy -g "$(id -gn blogdeploy)" "$site"
 runuser -u blogdeploy -- install -d -m 0755 "$site/releases"
 install -m 0644 -o root -g root tcrb-web-deploy.service tcrb-web-deploy.timer /etc/systemd/system/

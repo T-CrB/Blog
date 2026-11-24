@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "deploy" / "admin"))
-from article_editor import article_from_form, values_from_article  # noqa: E402
+from article_editor import article_from_form, body_to_text, parse_body, values_from_article  # noqa: E402
 from github_editor import (  # noqa: E402
     API_PREFIX, ARTICLES, ArticleConflict, ArticleUnchanged, GitHubEditor, PublishInterrupted, RepositoryError,
     app_jwt, valid_slug,
@@ -26,6 +26,8 @@ PREVIOUS = "b" * 40
 MARKER = {"name": ".editor-v1", "type": "file", "sha": PREVIOUS}
 FILE = {"name": "notes.json", "type": "file", "sha": PREVIOUS}
 TOKEN_PATH = "/app/installations/123/access_tokens"
+MAIN_RULES_PATH = f"{API_PREFIX}/rules/branches/main"
+MAIN_RULES = [{"type": "pull_request"}, {"type": "update"}]
 ROOT_PATH = f"{API_PREFIX}/contents/{ARTICLES}"
 
 
@@ -61,15 +63,22 @@ class EditorRepositoryTest(unittest.TestCase):
                 self.assertEqual(post.stem, raw["slug"])
                 self.assertEqual(raw, article_from_form(values_from_article(raw)))
 
+    def test_editor_generated_body_keeps_literal_markers_on_round_trip(self):
+        text = "  ## Literal first paragraph\n\n  ## Another literal paragraph\n \n\n## Real heading"
+        body = parse_body(text)
+        self.assertEqual([block["type"] for block in body], ["p", "p", "h2"])
+        self.assertEqual(parse_body(body_to_text(body)), body)
+
     def test_create_pr_writes_only_one_article_and_never_main(self):
         for previous, listing in (("", [MARKER]), (PREVIOUS, [MARKER, FILE])):
             with self.subTest(edit=bool(previous)):
-                client, api = fake_client({"object": {"sha": MAIN}}, listing, {}, {}, {"number": 51})
+                client, api = fake_client(MAIN_RULES, {"object": {"sha": MAIN}}, listing, {}, {}, {"number": 51})
                 article = {"slug": "notes", "title": "测试文章"}
                 self.assertEqual(client.publish(article, previous), 51)
                 self.assertTrue(all(url.scheme == "https" and url.netloc == "api.github.com" for _, url, _, _ in api.requests))
                 self.assertEqual([(m, url.path) for m, url, _, _ in api.requests], [
-                    ("POST", TOKEN_PATH), ("GET", f"{API_PREFIX}/git/ref/heads/main"), ("GET", ROOT_PATH),
+                    ("POST", TOKEN_PATH), ("GET", MAIN_RULES_PATH),
+                    ("GET", f"{API_PREFIX}/git/ref/heads/main"), ("GET", ROOT_PATH),
                     ("POST", f"{API_PREFIX}/git/refs"), ("PUT", f"{ROOT_PATH}/notes.json"), ("POST", f"{API_PREFIX}/pulls"),
                 ])
                 self.assertEqual(api.requests[0][2], {
@@ -77,30 +86,39 @@ class EditorRepositoryTest(unittest.TestCase):
                 })
                 self.assertEqual(api.requests[0][3], "Bearer mock_signed_jwt")
                 self.assertTrue(all(req[3] == "Bearer mock_short_lived_token" for req in api.requests[1:]))
-                self.assertEqual(api.requests[2][1].query, f"ref={MAIN}")
-                created, changed, pull = (request[2] for request in api.requests[3:])
+                self.assertEqual(api.requests[3][1].query, f"ref={MAIN}")
+                created, changed, pull = (request[2] for request in api.requests[4:])
                 self.assertRegex(changed["branch"], r"^blog-editor/notes-[0-9a-f]{12}$")
                 self.assertEqual(created, {"sha": MAIN, "ref": f'refs/heads/{changed["branch"]}'})
                 self.assertEqual(changed.get("sha", ""), previous)
                 self.assertEqual(json.loads(base64.b64decode(changed["content"])), article)
                 self.assertEqual((pull["base"], pull["head"]), ("main", changed["branch"]))
 
+    def test_missing_main_rules_stop_before_creating_a_branch(self):
+        for rules in ([], [{"type": "pull_request"}], [{"type": "update"}]):
+            with self.subTest(rules=rules):
+                client, api = fake_client(rules)
+                with self.assertRaisesRegex(RepositoryError, "main_rules_not_configured"):
+                    client.publish({"slug": "notes"}, "")
+                self.assertEqual([(m, url.path) for m, url, _, _ in api.requests],
+                                 [("POST", TOKEN_PATH), ("GET", MAIN_RULES_PATH)])
+
     def test_outdated_article_and_unmerged_layout_stop_before_new_branch(self):
         for listing, expected_error in (([MARKER, FILE], ArticleConflict), ([FILE], RepositoryError)):
-            client, api = fake_client({"object": {"sha": MAIN}}, listing)
+            client, api = fake_client(MAIN_RULES, {"object": {"sha": MAIN}}, listing)
             with self.assertRaises(expected_error):
                 client.publish({"slug": "notes"}, "")
-            self.assertEqual(len(api.requests), 3)
+            self.assertEqual(len(api.requests), 4)
             self.assertTrue(all(req[0] == "GET" for req in api.requests[1:]))
 
     def test_unchanged_article_does_not_create_a_branch(self):
         article = {"slug": "notes", "title": "A note"}
         raw = (json.dumps(article, ensure_ascii=False, indent=2) + "\n").encode()
         sha = hashlib.sha1(f"blob {len(raw)}\0".encode() + raw, usedforsecurity=False).hexdigest()
-        client, api = fake_client({"object": {"sha": MAIN}}, [MARKER, {**FILE, "sha": sha}])
+        client, api = fake_client(MAIN_RULES, {"object": {"sha": MAIN}}, [MARKER, {**FILE, "sha": sha}])
         with self.assertRaises(ArticleUnchanged):
             client.publish(article, sha)
-        self.assertEqual(len(api.requests), 3)
+        self.assertEqual(len(api.requests), 4)
 
     def test_read_uses_main_and_checks_exact_article_path(self):
         payload = {"slug": "notes", "title": "A note"}
@@ -116,14 +134,14 @@ class EditorRepositoryTest(unittest.TestCase):
         self.assertEqual(len(api.requests), 2)
 
     def test_lost_write_response_is_not_retried_or_echoed(self):
-        client, api = fake_client({"object": {"sha": MAIN}}, [MARKER], {}, {},
+        client, api = fake_client(MAIN_RULES, {"object": {"sha": MAIN}}, [MARKER], {}, {},
                                   HTTPError("https://api.github.com", 403, "do not expose this", {}, None))
         with self.assertRaises(PublishInterrupted) as error:
             client.publish({"slug": "notes"}, "")
         self.assertRegex(error.exception.branch, "^blog-editor/notes-")
         self.assertEqual((error.exception.stage, error.exception.reason), ("create_pull", "http_403"))
         self.assertNotIn("do not expose", str(error.exception))
-        self.assertEqual(len(api.requests), 6)
+        self.assertEqual(len(api.requests), 7)
 
     @unittest.skipUnless(shutil.which("openssl"), "OpenSSL is not installed")
     def test_app_jwt_is_signed_rs256_with_short_expiry(self):

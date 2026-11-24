@@ -1,40 +1,44 @@
 # 合并到 `main` 后自动部署博客
 
-**PR 只检查；合并后，GitHub Actions 构建 Astro 静态站并发布到 [GitHub Releases](https://github.com/T-CrB/Blog/releases)。ECS 每分钟检查一次，下载新版本、验证 SHA-256 和页面后，再原子切换 Nginx 的站点目录。** 下载失败不会覆盖线上版本，下次检查会重试。连续合并时会跳过已经落后于 `main` 的构建，旧提交重跑不会覆盖已经上线的新版本。
+**PR 只检查；合并后，GitHub Actions 构建 Astro 静态站并发布到 [GitHub Releases](https://github.com/T-CrB/Blog/releases)。ECS 每分钟检查一次，先验证清单确实由本仓库 `main` 上的生产工作流签署，再校验下载包的 SHA-256 和页面，最后原子切换站点目录。** 下载或验证失败不会覆盖线上版本。连续合并时会跳过已经落后于 `main` 的构建，旧提交重跑不会覆盖已经上线的新版本。
 
-ECS 需要能通过 HTTPS 下载 GitHub Release 资源。不需要 OSS、AccessKey、GitHub 个人令牌或新的 SSH 规则。本仓库是公开的，Release 中的构建包也是公开的，不能把私密文件放进 `public/` 或构建产物。
+ECS 需要能访问 GitHub Release 和 GitHub CLI 使用的 Sigstore 信任根（`tuf-repo.github.com`、`tuf-repo-cdn.sigstore.dev`）。不需要 OSS、AccessKey、GitHub 个人令牌或新的 SSH 规则。Release 是公开的，不能把私密文件放进 `public/` 或构建产物。
 
 ## 1. 在 GitHub 发布第一份构建
 
-在 **Settings → Environments → production** 中将部署分支限制为 `main`，不要设置人工审批或等待时间（否则无法无人值守）。不用新增 Secrets 或 Variables。合并本工作流的 PR 后，在 **Actions → CI / CD** 查看 `main` 的运行，等 **Publish production build to GitHub Releases** 成功。也可在 `main` 上选择 **Run workflow** 重试当前提交。
+先按[生产保护说明](admin/EDITOR.md#开启编辑前的生产保护)为 `main` 开启分支规则。在 **Settings → Environments → production** 中将部署分支限制为 `main`；不需要新增 Secrets 或 Variables。工作流只在受保护的 `main` 上由站长账号触发时发布。正常用站长身份合并即可，也可在 **Actions → CI / CD** 选择 `main` 上的 **Run workflow**。如启用文章编辑，仍须由站长本人审阅合并，不要配置机器人代合并。
 
-打开 **Releases**，确认新的 `Blog production` 发布对应这次合并的提交。工作流会先上传三个附件到草稿，全部完成后才设为 Latest。不要手动把没有部署附件的 Release 标记为 Latest。Actions 发布成功只代表构建包可下载，不代表 ECS 已切换。
+打开 **Releases**，确认新的 `Blog production` 对应这次合并的提交。工作流会在两个签名证明都通过校验、五个附件全部上传后才把草稿设为 Latest。不要手动把未经验证的 Release 设置成 Latest。Actions 发布成功不代表 ECS 已切换。
 
-## 2. 首次安装 ECS 拉取服务
+## 2. 安装或升级 ECS 拉取服务
 
-使用 Workbench 的管理员终端，确保有 `curl`、`python3` 和 `systemd`。以下命令适用于 Ubuntu + Nginx（包括宝塔管理的 Nginx）；root 终端可以省略 `sudo`。只从本仓库确认过提交的 Release 安装，不执行来历不明的脚本。
+使用 Workbench 的管理员终端，确保有 `curl`、`python3`、`systemd` 和支持 `gh attestation verify --source-digest` 的 [GitHub CLI](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)。不用在 ECS 上执行 `gh auth login`。以下命令适用于 Ubuntu + Nginx（包括宝塔管理的 Nginx）；root 终端可以省略 `sudo`。只使用已审阅提交的发布，先验证安装包签名再解压执行。
 
 ```bash
 # REV 填第一步中对应已审阅合并提交的完整 40 位 SHA。
-# SETUP_SHA256 填同一个 Release 说明中 “ECS setup SHA-256” 的 64 位值。
 REV='<完整提交 SHA>'
-SETUP_SHA256='<安装包 SHA-256>'
 (
   set -eu
   umask 077
   cd "$(mktemp -d)"
-  curl -fLsS --connect-timeout 8 --max-time 40 \
-    -o tcrb-blog-ecs-setup.tar.gz \
-    "https://github.com/T-CrB/Blog/releases/download/tcrb-blog-${REV}/tcrb-blog-ecs-setup.tar.gz"
-  printf '%s  %s\n' "$SETUP_SHA256" tcrb-blog-ecs-setup.tar.gz | sha256sum -c -
-  tar --no-same-owner -xzf tcrb-blog-ecs-setup.tar.gz
+  setup=tcrb-blog-ecs-setup.tar.gz
+  proof="$setup.sigstore.jsonl"
+  tag="https://github.com/T-CrB/Blog/releases/download/tcrb-blog-${REV}"
+  for asset in "$setup" "$proof"; do
+    curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+      --connect-timeout 8 --max-time 40 -o "$asset" "$tag/$asset"
+  done
+  gh attestation verify "$setup" --bundle "$proof" --repo T-CrB/Blog \
+    --cert-identity 'https://github.com/T-CrB/Blog/.github/workflows/ci-cd.yml@refs/heads/main' \
+    --source-ref refs/heads/main --source-digest "$REV" --deny-self-hosted-runners
+  tar --no-same-owner -xzf "$setup"
   sudo bash install-ecs.sh
   sudo systemctl start tcrb-web-deploy.service
   sudo journalctl -u tcrb-web-deploy.service -n 20 --no-pager
 )
 ```
 
-安装脚本复用现有 `blogdeploy` 用户，没有时创建一个不可登录的系统用户。拉取服务以此普通用户运行，不执行构建包中的文件。脚本只安装服务、在独立的 `/var/www/tcrb-web-deploy` 中准备新版本，不改旧站的目录或 Nginx 配置。
+安装脚本复用现有 `blogdeploy` 用户，没有时创建一个不可登录的系统用户。拉取服务以此普通用户运行，不执行构建包中的文件。脚本不改 Nginx、不删除当前站点或历史版本。升级已有服务时先等第一份带证明的产物发布；旧的无签名 Release 不会被新版拉取器安装。若 ECS 有单独维护的下载兼容设置，升级前先确认新版拉取器也包含它们。
 
 ## 3. 验证后切换站点并开启自动更新
 
@@ -46,4 +50,10 @@ sudo systemctl enable --now tcrb-web-deploy.timer
 systemctl list-timers tcrb-web-deploy.timer
 ```
 
-浏览器打开首页、`/blog/` 和 `/_deploy-revision.txt`；最后一个应显示这次上线的合并提交。下一次合并后再检查此地址是否自动更新。完成验收后，可以删除不用的 `SERVER_*` GitHub Secrets。GitHub 不能下载时检查 `journalctl -u tcrb-web-deploy.service`，不要为此放开 SSH。若需要紧急回退，先运行 `sudo systemctl disable --now tcrb-web-deploy.timer`，再把静态站根目录恢复到之前验证过的目录并重载。历史部署目录按需手动清理，不要删除 `current` 指向的版本。
+浏览器打开首页、`/blog/` 和 `/_deploy-revision.txt`；最后一个应显示这次上线的合并提交。已有站点不需要再次切换 Nginx，确认定时器启用后可以用下面的只读检查复核当前版本：
+
+```bash
+sudo runuser -u blogdeploy -- /usr/bin/python3 -B /usr/local/lib/tcrb-web-deploy/pull.py --verify-current
+```
+
+下一次合并后再检查此地址是否自动更新。完成验收后，可以删除不用的 `SERVER_*` GitHub Secrets。GitHub 不能下载时检查 `journalctl -u tcrb-web-deploy.service`，不要为此放开 SSH。若需要紧急回退，先运行 `sudo systemctl disable --now tcrb-web-deploy.timer`，再把静态站根目录恢复到之前验证过的目录并重载。历史部署目录按需手动清理，不要删除 `current` 指向的版本。

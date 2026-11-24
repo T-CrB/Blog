@@ -1,8 +1,12 @@
 # 网页文章编辑器
 
-通过 `/admin/` 登录站长账号后，可以新增文章、编辑 `main` 上的既有文章、预览，或创建 GitHub PR。只处理 `src/content/blog/` 下的文章文件，不修改网页模板、工作流、线上文件或 `main`。PR 提交后仍要你在 GitHub 合并，才会走原来的自动部署。编辑器不会自动保存未提交的草稿；预览或报错时，当前表单会保留输入。
+通过 `/admin/` 登录站长账号后，可以新增文章、编辑 `main` 上的既有文章、预览，或创建 GitHub PR。只处理 `src/content/blog/` 下的文章文件；由站长在 GitHub 审阅并合并后才会自动部署。编辑器不会自动保存草稿。在登录仍有效时，表单过期会保留输入，可以重新预览后再提交；如果之前提交过，先在 GitHub 确认未创建重复 PR。
 
-先合并包含文章文件和编辑器的 PR，再在 ECS 启用编辑。只升级后台但不配置编辑凭据时，原有站长登录照常可用。
+## 开启编辑前的生产保护
+
+1. 在仓库 **Settings → Rules → Rulesets** 创建针对 `main` 的 **Active** 分支规则集。启用 **Restrict updates**、**Require a pull request before merging**、**Restrict deletions** 和 **Block force pushes**。只把 **Repository admins** 加到豁免列表，模式设为 **For pull requests only**，以便站长能合并但不能直接推送。可给必检项添加 `Build Astro site`；不要启用要求压缩合并的线性历史规则。不要把编辑 App、普通写权限角色或其他自动化加入豁免列表。发布工作流要求 `main` 受保护且由站长触发；编辑器在缺少更新限制或 PR 规则时拒绝创建 PR。
+2. 先用普通合并提交合并登录 PR，再合并包含编辑器和产物校验的 PR。按[静态站部署说明](../README.md)发布第一份带证明的生产产物，升级 ECS 拉取器，并确认它正在运行且已验证签名。启用脚本会在安装编辑私钥前检查拉取服务和当前版本。
+3. 完成以上两步后再安装下方的 GitHub App。App 的写权限不是文件路径级别；它仍可管理仓库 Release 资源，但 ECS 会拒绝没有指定生产工作流签名的清单。只升级后台而不配置编辑凭据时，站长登录照常可用。
 
 ## 创建只用于文章 PR 的 GitHub App
 
@@ -29,7 +33,7 @@ chmod 600 /root/blog-editor.private-key.pem &&
   bash /root/admin/enable-editor-ecs.sh /root/blog-editor.private-key.pem
 ```
 
-在现有的 HTTPS `location ^~ /admin/` 中，把 `client_max_body_size 2k;` 改成 `client_max_body_size 256k;`，把 `proxy_read_timeout 25s;` 改成 `proxy_read_timeout 65s;`。不新增重复的 `location`，不碰 80、证书验证或静态站路径。配置位于 `/www/server/panel/vhost/nginx/tcrb-blog.conf`，先备份再改，检查成功才重载：
+确认已按[登录部署说明](README.md)为 `/admin/login` 安装限流配置。在现有的 HTTPS `location ^~ /admin/` 中，把 `client_max_body_size` 改为 `256k`，`proxy_read_timeout` 改为 `95s`。不新增重复的 `location`，不碰 80、证书验证或静态站路径。配置位于 `/www/server/panel/vhost/nginx/tcrb-blog.conf`，先备份再改，检查成功才重载：
 
 ```bash
 /www/server/nginx/sbin/nginx -c /www/server/nginx/conf/nginx.conf -t &&

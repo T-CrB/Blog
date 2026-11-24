@@ -20,6 +20,7 @@ EDITOR_METHODS = {
 }
 MAX_REQUEST = 256 * 1024
 MAX_BODY_CHARS = 18_000
+TICKET_AGE = 60 * 60
 TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
 ACCENTS = {"coral": "珊瑚", "blue": "蓝色", "green": "绿色", "yellow": "黄色"}
 FIELDS = (
@@ -36,12 +37,18 @@ class InvalidArticle(ValueError):
     """Validation errors are safe to display to the signed-in owner."""
 
 
+def normalize_newlines(value):
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def parse_body(value):
-    value = value.replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not value or len(value) > MAX_BODY_CHARS or re.search(r"[\x00-\x08\x0b-\x1f\x7f]", value):
+    value = normalize_newlines(value).strip("\n")
+    if not value.strip() or len(value) > MAX_BODY_CHARS or re.search(r"[\x00-\x08\x0b-\x1f\x7f]", value):
         raise InvalidArticle("正文不能为空、不能超过 18,000 字，也不能含控制字符。")
     blocks = []
-    for part in re.split(r"\n[ \t]*\n+", value):
+    for part in re.split(r"\n(?:[ \t]*\n)+", value):
+        if not part.strip():
+            continue
         lines = part.split("\n")
         if len(lines) == 1 and part.startswith("## ") and part[3:].strip():
             block = {"type": "h2", "text": part[3:].strip()}
@@ -53,7 +60,8 @@ def parse_body(value):
             if cite:
                 block["cite"] = cite
         else:
-            block = {"type": "p", "text": part.strip()}
+            # Keep leading spaces: trimming them could turn literal text into markup on re-edit.
+            block = {"type": "p", "text": part}
         blocks.append(block)
     if len(blocks) > 200:
         raise InvalidArticle("正文最多保留 200 个段落、标题、引用或列表块。")
@@ -78,7 +86,7 @@ def body_to_text(blocks):
     return "\n\n".join(parts)
 
 
-def article_from_form(values):
+def article_from_form(values, original=None):
     slug = values.get("slug", "")
     if not valid_slug(slug):
         raise InvalidArticle("文章网址只能用小写英文字母、数字和单个连字符，最长 64 个字符。")
@@ -99,13 +107,22 @@ def article_from_form(values):
     if accent not in ACCENTS:
         raise InvalidArticle("请选择一个封面颜色。")
     article["accent"] = accent
-    tags = [part.strip() for part in re.split(r"[,，、]", values.get("tags", "")) if part.strip()]
-    if len(tags) > 10 or any(len(tag) > 32 or re.search(r"[\x00-\x1f\x7f]", tag) for tag in tags):
-        raise InvalidArticle("最多填写 10 个标签，每个不超过 32 个字符。")
-    article["tags"] = tags
+    tags_text = values.get("tags", "")
+    if original is not None and tags_text == ", ".join(original["tags"]):
+        article["tags"] = original["tags"]
+    else:
+        tags = [part.strip() for part in re.split(r"[,，、]", tags_text) if part.strip()]
+        if len(tags) > 10 or any(len(tag) > 32 or re.search(r"[\x00-\x1f\x7f]", tag) for tag in tags):
+            raise InvalidArticle("最多填写 10 个标签，每个不超过 32 个字符。")
+        article["tags"] = tags
     if values.get("featured") == "1":
         article["featured"] = True
-    article["body"] = parse_body(values.get("body", ""))
+    body = normalize_newlines(values.get("body", ""))
+    if original is not None and body == normalize_newlines(body_to_text(original["body"])):
+        # Existing articles may have been authored directly as JSON. Only parse edited text.
+        article["body"] = original["body"]
+    else:
+        article["body"] = parse_body(body)
     return article
 
 
@@ -162,6 +179,7 @@ def form_html(values, csrf, ticket):
     options = "".join(f'<option value="{key}" {"selected" if values.get("accent") == key else ""}>{label}</option>'
                       for key, label in ACCENTS.items())
     checked = "checked" if values.get("featured") == "1" else ""
+    publish_disabled = " disabled" if not ticket else ""
     return f'''<form class="editor" method="post" action="/admin/article/preview" accept-charset="UTF-8">
 <input type="hidden" name="csrf" value="{csrf}"><input type="hidden" name="ticket" value="{ticket}">
 <input type="hidden" name="base" value="{base}">
@@ -171,9 +189,10 @@ def form_html(values, csrf, ticket):
 <label>封面颜色<select name="accent">{options}</select></label>
 <label class="editor-check"><input type="checkbox" name="featured" value="1" {checked}>突出显示文章卡片</label></div>
 <label for="body">正文</label><p class="editor-hint" id="body-hint">用空行分段。<code>## </code>是小标题，<code>&gt; </code>是引用，<code>- </code>是列表。正文不会执行 HTML。</p>
-<textarea id="body" name="body" aria-describedby="body-hint" required rows="13" maxlength="{MAX_BODY_CHARS}">{v("body")}</textarea>
+<textarea id="body" name="body" aria-describedby="body-hint" required rows="13" maxlength="{MAX_BODY_CHARS}">
+{v("body")}</textarea>
 <div class="actions"><button class="button" type="submit">预览文章</button>
-<button class="button" type="submit" formaction="/admin/article/publish">创建 GitHub PR</button></div>
+<button class="button" type="submit" formaction="/admin/article/publish"{publish_disabled}>创建 GitHub PR</button></div>
 </form>'''
 
 
@@ -184,10 +203,10 @@ class ArticleEditor:
         self.page = page
         self.tickets = tickets
 
-    def _form(self, values, csrf, *, status=200, message=None, extra="", ticket=None):
+    def _form(self, values, csrf, *, status=200, message=None, extra="", issue_ticket=True):
         title = "编辑文章" if values.get("base") else "写新文章"
         text = "创建 PR 只会提交文章修改，合并后才会发布。离开本页前，未提交的文字不会自动保存。"
-        controls = form_html(values, csrf, ticket or self.tickets.issue(csrf))
+        controls = form_html(values, csrf, self.tickets.issue(csrf) if issue_ticket else "")
         notice = f'<p class="editor-notice" role="alert">{escape(message)}</p>' if message else ""
         return status, self.page(title, text, ARTICLES_LINK, content=notice + controls + extra, wide=True), []
 
@@ -224,21 +243,40 @@ class ArticleEditor:
         ticket = values.get("ticket", "")
         origin = env.get("HTTP_ORIGIN")
         same_origin = origin == self.origin or (origin in (None, "null") and env.get("HTTP_SEC_FETCH_SITE") == "same-origin")
-        if (not same_origin or not TOKEN.fullmatch(supplied)
-                or not hmac.compare_digest(csrf, supplied) or not TOKEN.fullmatch(ticket)
-                or self.tickets.read(ticket) != csrf):
+        if not same_origin or not TOKEN.fullmatch(supplied) or not hmac.compare_digest(csrf, supplied):
             return 403, self.page("编辑请求无效", "请在同一个浏览器重新打开后台文章页。", BACK), []
+        if ticket and not TOKEN.fullmatch(ticket):
+            return 403, self.page("编辑请求无效", "请在同一个浏览器重新打开后台文章页。", BACK), []
+        # An expired ticket and a replay are indistinguishable here. Keep the input,
+        # but require a new preview before allowing another write; never replay it.
+        valid_ticket = self.tickets.read(ticket, consume=True, matches=lambda stored: hmac.compare_digest(stored, csrf))
+        if not valid_ticket:
+            if path != "/admin/article/preview" or ticket:
+                return self._form(values, csrf, status=409, issue_ticket=False,
+                                  message="表单已过期或已提交。本次没有创建 PR，文字已保留。若曾提交，请先在 GitHub 确认，再重新预览。")
         base = values.get("base", "")
         if base and not valid_sha(base):
             return 400, self.page("文章版本无效", "请从文章列表重新打开。", ARTICLES_LINK), []
+        original = None
+        slug = values.get("slug", "")
+        if base and valid_slug(slug):
+            try:
+                original, sha = self.publisher.read(slug)
+                if sha != base:
+                    raise ArticleConflict("article_changed")
+                values_from_article(original)  # Validate the stored data before using it in a form.
+            except (ArticleConflict, ArticleNotFound):
+                return self._form(values, csrf, status=409,
+                                  message="文章已更新或移除。请保留你的文字并重新打开最新版本。")
+            except (RepositoryError, ValueError, TypeError, KeyError) as error:
+                LOG.warning("Article editor read failed: %s", error if isinstance(error, RepositoryError) else "invalid_article")
+                return self._form(values, csrf, status=502, message="未能读取原文，本次输入仍保留在下面。请稍后重试。")
         try:
-            article = article_from_form(values)
+            article = article_from_form(values, original)
         except InvalidArticle as error:
-            return self._form(values, csrf, status=422, message=str(error), ticket=ticket)
+            return self._form(values, csrf, status=422, message=str(error))
         if path == "/admin/article/preview":
-            return self._form(values, csrf, extra=preview(article), ticket=ticket)
-        if self.tickets.read(ticket, consume=True) != csrf:
-            return 409, self.page("这次提交已处理", "请先在 GitHub 查看是否已经创建 PR。", ARTICLES_LINK), []
+            return self._form(values, csrf, extra=preview(article))
         try:
             number = self.publisher.publish(article, base)
         except ArticleUnchanged:
@@ -251,6 +289,9 @@ class ArticleEditor:
             return self._form(values, csrf, status=502, message=f"请先到 GitHub 检查 {error.branch} 分支是否已有提交或 PR，再决定是否重试。")
         except RepositoryError as error:
             LOG.warning("Article editor publish failed: %s", error)
+            if str(error) == "main_rules_not_configured":
+                return self._form(values, csrf, status=503,
+                                  message="尚未启用 main 的推送限制和 PR 规则。本次没有创建 PR，文字已保留。")
             return self._form(values, csrf, status=502, message="未能准备文章 PR，本次文字仍保留在下面。请检查 GitHub 配置或网络后再试。")
         action = f'<a class="button" href="https://github.com/{REPOSITORY}/pull/{number}">在 GitHub 查看 PR #{number}</a>'
         return 201, self.page("文章 PR 已创建", "这篇文章还没有上线。请在 GitHub 审阅并合并，之后会自动部署。",

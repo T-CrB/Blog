@@ -152,11 +152,21 @@ class GitHubEditor:
             raise RepositoryError("invalid_article_file")
         return document, info["sha"]
 
+    def _require_main_rules(self, token):
+        rules = self._request("GET", f"{API_PREFIX}/rules/branches/{BASE}", token)
+        if not isinstance(rules, list) or not all(isinstance(rule, dict) for rule in rules):
+            raise RepositoryError("invalid_main_rules")
+        active = {rule.get("type") for rule in rules if isinstance(rule.get("type"), str)}
+        if not {"update", "pull_request"} <= active:
+            raise RepositoryError("main_rules_not_configured")
+
     def publish(self, article, expected_sha):
         slug = article.get("slug")
         if not valid_slug(slug) or (expected_sha != "" and not valid_sha(expected_sha)):
             raise ArticleConflict("invalid_article_version")
         token = self._token()
+        # This checks active rules, not their bypass list; never give the editor App a bypass.
+        self._require_main_rules(token)
         ref = self._request("GET", f"{API_PREFIX}/git/ref/heads/{BASE}", token)
         head = ref.get("object", {}) if isinstance(ref, dict) else None
         if not isinstance(head, dict) or not valid_sha(head.get("sha")):
