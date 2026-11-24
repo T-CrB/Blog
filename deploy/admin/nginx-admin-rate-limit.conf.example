@@ -1,0 +1,7 @@
+# Paste once inside nginx's http { ... } block, outside all server blocks.
+# An empty key disables rate limiting for other admin routes, including the OAuth callback.
+map $uri $tcrb_admin_login_client {
+    default "";
+    /admin/login $binary_remote_addr;
+}
+limit_req_zone $tcrb_admin_login_client zone=tcrb_admin_login:1m rate=5r/m;

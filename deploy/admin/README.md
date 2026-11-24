@@ -41,10 +41,12 @@ blog_nginx() { /www/server/nginx/sbin/nginx -c /www/server/nginx/conf/nginx.conf
 BACKUP=$(mktemp -d /root/tcrb-blog-pre-admin.XXXXXXXX) &&
   cp -p -- "$SITE" "$BACKUP/tcrb-blog.conf" &&
   printf '备份位置：%s/tcrb-blog.conf\n' "$BACKUP" &&
-  cat /root/admin/nginx-admin.conf.example && nano "$SITE"
+  cat /root/admin/nginx-admin-rate-limit.conf.example /root/admin/nginx-admin.conf.example && nano "$SITE"
 ```
 
-只把打印的 `location ^~ /admin/ { ... }` 贴进**含 `listen 443 ssl` 的博客 `server` 块**中，与原有 `location /` 并列。不要改 80 端口那段、证书验证路径或博客根目录。保存后运行 `blog_nginx -t && blog_nginx -s reload`。如检查报错，先不要重载；可在同一终端用 `cp -p -- "$BACKUP/tcrb-blog.conf" "$SITE"` 恢复备份。
+先备份 `/www/server/nginx/conf/nginx.conf`，把 `nginx-admin-rate-limit.conf.example` 的 `map` 和 `limit_req_zone` 加到它的 **`http { ... }` 块**中，只加一次，不放进任何 `server` 块。再把 `nginx-admin.conf.example` 里的 `location ^~ /admin/ { ... }` 放进**含 `listen 443 ssl` 的博客 `server` 块**，与原有 `location /` 并列。已经有 `/admin/` 转发时，只在原有块内补上 `limit_req` 和 `limit_req_status`，不要添加第二个 `location`。此限制按来源 IP 只作用于发起登录，不限制 OAuth 回调、浏览文章或退出。
+
+不要改 80 端口那段、证书验证路径或博客根目录。保存后运行 `blog_nginx -t && blog_nginx -s reload`。检查报错时先不要重载；从备份恢复改动的配置后再检查。
 
 ## 验收
 
