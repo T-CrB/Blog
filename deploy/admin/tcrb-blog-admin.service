@@ -1,0 +1,29 @@
+[Unit]
+Description=TCrB blog owner sign-in
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+DynamicUser=yes
+WorkingDirectory=/opt/tcrb-blog-admin
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/tcrb-blog-admin/admin.conf
+LoadCredential=github-client-secret:/etc/tcrb-blog-admin/github-client-secret
+ExecStart=/opt/tcrb-blog-admin/venv/bin/waitress-serve --listen=127.0.0.1:8765 --threads=4 --connection-limit=32 --max-request-header-size=16384 --max-request-body-size=2048 --channel-timeout=30 --url-scheme=https --call admin_service:create_app
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target
